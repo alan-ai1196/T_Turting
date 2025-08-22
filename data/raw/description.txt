@@ -1,0 +1,29 @@
+中国癌症患者病历数据集
+一、	数据集内容
+中国癌症患者数据集，专为医学研究、生存预测建模及医疗资源分配不均分析设计。该数据集包含肿瘤特征、治疗类型、生存状态以及吸烟、饮酒等生活方式因素。
+其反映了中国癌症流行病学的实际情况，肺癌、胃癌和肝癌的发病率较高，并考虑了不同地区在治疗和预后方面的差异。
+该数据集适用于机器学习模型、公共卫生研究、预测分析及学术研究——尤其在癌症预后预测、治疗效果评估以及先进医疗资源可及性公平性等领域。
+
+二、	基本字段介绍
+字段	解释
+PatientID	患者ID
+Gender	性别
+Age	年龄
+Province	省份
+Ethnicity	民族
+TumorType	肿瘤类型
+CancerStage	癌症分期
+DiagnosisDate	诊断日期
+TumorSize	肿瘤大小
+Metastasis	转移
+TreatmentType	治疗类型
+SurgeryDate	手术日期
+ChemotherapySessions	化疗疗程
+RadiationSessions	辐射治疗
+SurvivalStatus	生存状态
+FollowUpMonths	跟进月份
+SmokingStatus	吸烟状态
+AlcoholUse	酒精使用
+GeneticMutation	基因突变
+Comorbidities	并发症
+
