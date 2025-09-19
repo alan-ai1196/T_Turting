@@ -13,7 +13,7 @@ from lifelines import CoxPHFitter
 from lifelines.utils import concordance_index
 from sksurv.ensemble import RandomSurvivalForest
 from sksurv.metrics import concordance_index_censored
-from sksurv.utils import Surv
+from sksurv.util import Surv
 import pickle
 from pathlib import Path
 import matplotlib.pyplot as plt

@@ -11,9 +11,12 @@ from lifelines import KaplanMeierFitter
 from lifelines.utils import concordance_index
 from lifelines.statistics import logrank_test
 from sksurv.metrics import concordance_index_censored, brier_score, integrated_brier_score
+from sksurv.util import Surv
 from scipy import stats
 import pickle
 from pathlib import Path
+import warnings
+warnings.filterwarnings('ignore')
 
 
 class SurvivalModelEvaluator:
@@ -120,6 +123,151 @@ class SurvivalModelEvaluator:
         self.results['risk_stratification'] = stratification_results
         return stratification_results
     
+    def calculate_brier_scores(self, time_points=None):
+        """计算时间依赖的Brier Score"""
+        if time_points is None:
+            # 使用默认时间点：25%, 50%, 75%分位数
+            base_data = None
+            for model_name in self.predictions:
+                if base_data is None:
+                    base_data = self.predictions[model_name][['Duration', 'Event']].copy()
+            
+            durations = base_data['Duration'].values
+            time_points = np.quantile(durations[durations > 0], [0.25, 0.5, 0.75])
+        
+        brier_results = {}
+        
+        # 获取基础数据
+        base_data = None
+        for model_name in self.predictions:
+            if base_data is None:
+                base_data = self.predictions[model_name][['Duration', 'Event']].copy()
+        
+        durations = base_data['Duration'].values
+        events = base_data['Event'].values
+        
+        # 创建结构化数组用于sksurv
+        y_true = Surv.from_arrays(events.astype(bool), durations)
+        
+        # 计算各模型的Brier Score
+        for model_key, model_name in [('deepsurv', 'DeepSurv'), 
+                                     ('cox', 'Cox Regression'), 
+                                     ('rsf', 'Random Survival Forest')]:
+            if model_key in self.predictions:
+                model_brier_scores = []
+                
+                for t in time_points:
+                    try:
+                        # 获取风险得分
+                        if model_key == 'deepsurv':
+                            risk_scores = self.predictions[model_key]['Risk_Score'].values
+                            # 对于DeepSurv，需要将风险得分转换为生存概率
+                            # 使用简化的指数变换
+                            survival_probs = np.exp(-np.exp(risk_scores) * t / 12)  # 假设时间单位为月
+                        elif model_key == 'cox':
+                            risk_scores = self.predictions[model_key]['Cox_Risk_Score'].values
+                            # Cox模型的风险得分转换为生存概率
+                            survival_probs = np.exp(-np.exp(risk_scores) * t / 12)
+                        else:  # RSF
+                            risk_scores = self.predictions[model_key]['RSF_Risk_Score'].values
+                            # RSF的风险得分转换为生存概率
+                            survival_probs = np.exp(-risk_scores * t / 12)
+                        
+                        # 计算Brier Score
+                        bs = brier_score(y_true, survival_probs, t)[1]
+                        model_brier_scores.append(bs)
+                    
+                    except Exception as e:
+                        print(f"警告: 无法计算{model_name}在时间点{t}的Brier Score: {e}")
+                        model_brier_scores.append(np.nan)
+                
+                brier_results[model_name] = {
+                    'time_points': time_points,
+                    'brier_scores': model_brier_scores,
+                    'mean_brier_score': np.nanmean(model_brier_scores)
+                }
+        
+        self.results['brier_scores'] = brier_results
+        return brier_results
+    
+    def calculate_integrated_brier_scores(self, time_range=None):
+        """计算集成Brier Score (IBS)"""
+        if time_range is None:
+            # 使用默认时间范围
+            base_data = None
+            for model_name in self.predictions:
+                if base_data is None:
+                    base_data = self.predictions[model_name][['Duration', 'Event']].copy()
+            
+            durations = base_data['Duration'].values
+            max_time = np.percentile(durations[durations > 0], 75)  # 使用75%分位数作为最大时间
+            time_range = (0, max_time)
+        
+        ibs_results = {}
+        
+        # 获取基础数据
+        base_data = None
+        for model_name in self.predictions:
+            if base_data is None:
+                base_data = self.predictions[model_name][['Duration', 'Event']].copy()
+        
+        durations = base_data['Duration'].values
+        events = base_data['Event'].values
+        
+        # 创建结构化数组用于sksurv
+        y_true = Surv.from_arrays(events.astype(bool), durations)
+        
+        # 计算各模型的IBS
+        for model_key, model_name in [('deepsurv', 'DeepSurv'), 
+                                     ('cox', 'Cox Regression'), 
+                                     ('rsf', 'Random Survival Forest')]:
+            if model_key in self.predictions:
+                try:
+                    # 获取风险得分
+                    if model_key == 'deepsurv':
+                        risk_scores = self.predictions[model_key]['Risk_Score'].values
+                    elif model_key == 'cox':
+                        risk_scores = self.predictions[model_key]['Cox_Risk_Score'].values
+                    else:  # RSF
+                        risk_scores = self.predictions[model_key]['RSF_Risk_Score'].values
+                    
+                    # 创建时间点数组
+                    time_points = np.linspace(time_range[0], time_range[1], 50)
+                    time_points = time_points[time_points > 0]  # 排除0时间点
+                    
+                    # 计算每个时间点的生存概率
+                    survival_functions = []
+                    for t in time_points:
+                        if model_key == 'deepsurv':
+                            survival_probs = np.exp(-np.exp(risk_scores) * t / 12)
+                        elif model_key == 'cox':
+                            survival_probs = np.exp(-np.exp(risk_scores) * t / 12)
+                        else:  # RSF
+                            survival_probs = np.exp(-risk_scores * t / 12)
+                        survival_functions.append(survival_probs)
+                    
+                    survival_functions = np.array(survival_functions).T  # 转置：样本 x 时间点
+                    
+                    # 计算IBS
+                    ibs = integrated_brier_score(y_true, survival_functions, time_points)
+                    
+                    ibs_results[model_name] = {
+                        'ibs': ibs,
+                        'time_range': time_range,
+                        'n_time_points': len(time_points)
+                    }
+                
+                except Exception as e:
+                    print(f"警告: 无法计算{model_name}的IBS: {e}")
+                    ibs_results[model_name] = {
+                        'ibs': np.nan,
+                        'time_range': time_range,
+                        'n_time_points': 0
+                    }
+        
+        self.results['integrated_brier_scores'] = ibs_results
+        return ibs_results
+
     def calculate_logrank_test(self, durations, events, risk_scores):
         """计算风险分层的log-rank检验"""
         risk_groups = self.create_risk_groups(risk_scores)
@@ -200,23 +348,168 @@ class SurvivalModelEvaluator:
         """绘制单个模型的风险分层生存曲线"""
         risk_groups = self.create_risk_groups(risk_scores)
         
-        kmf = KaplanMeierFitter()
         colors = ['green', 'orange', 'red']
         labels = ['低风险组', '中风险组', '高风险组']
+        
+        # 存储每组的生存曲线以便计算统计量
+        km_estimates = []
         
         for group in range(3):
             mask = risk_groups == group
             group_durations = durations[mask]
             group_events = events[mask]
             
-            kmf.fit(group_durations, group_events, label=f'{labels[group]} (n={mask.sum()})')
-            kmf.plot_survival_function(ax=ax, color=colors[group], linewidth=2)
+            if len(group_durations) > 0:
+                kmf = KaplanMeierFitter()
+                kmf.fit(group_durations, group_events, label=f'{labels[group]} (n={mask.sum()})')
+                
+                # 绘制生存曲线
+                kmf.plot(ax=ax, color=colors[group], ci_show=True, alpha=0.7)
+                km_estimates.append(kmf)
+                
+                # 添加中位生存时间标注
+                median_survival = kmf.median_survival_time_
+                if not np.isnan(median_survival):
+                    ax.axvline(x=median_survival, color=colors[group], linestyle='--', alpha=0.5)
+                    ax.text(median_survival, 0.5 - group*0.1, f'中位: {median_survival:.1f}月', 
+                           rotation=90, fontsize=8, color=colors[group])
         
-        ax.set_title(f'{model_name} - 风险分层生存曲线', fontsize=12)
+        # 计算并显示log-rank检验结果
+        if len(km_estimates) >= 2:
+            try:
+                # 低风险组 vs 高风险组的log-rank检验
+                low_risk_mask = risk_groups == 0
+                high_risk_mask = risk_groups == 2
+                
+                if low_risk_mask.sum() > 0 and high_risk_mask.sum() > 0:
+                    logrank_result = logrank_test(
+                        durations[low_risk_mask], durations[high_risk_mask],
+                        events[low_risk_mask], events[high_risk_mask]
+                    )
+                    
+                    p_value = logrank_result.p_value
+                    ax.text(0.02, 0.02, f'Log-rank p-value: {p_value:.4f}', 
+                           transform=ax.transAxes, fontsize=10,
+                           bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
+            except Exception as e:
+                print(f"无法计算{model_name}的log-rank检验: {e}")
+        
+        ax.set_title(f'{model_name} - 风险分层生存分析', fontsize=12, fontweight='bold')
         ax.set_xlabel('时间 (月)', fontsize=10)
         ax.set_ylabel('生存概率', fontsize=10)
-        ax.legend(fontsize=10)
         ax.grid(True, alpha=0.3)
+        ax.legend(loc='best', fontsize=9)
+    
+    def plot_comprehensive_survival_comparison(self, save_path=None):
+        """绘制综合的生存曲线对比图"""
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        fig.suptitle('癌症生存分析模型综合对比', fontsize=16, fontweight='bold')
+        
+        # 获取基础数据
+        base_data = None
+        for model_name in self.predictions:
+            if base_data is None:
+                base_data = self.predictions[model_name][['Duration', 'Event']].copy()
+        
+        durations = base_data['Duration'].values
+        events = base_data['Event'].values
+        
+        # 子图1: 所有模型的低风险组对比
+        ax1 = axes[0, 0]
+        self._plot_risk_group_comparison(durations, events, 0, ax1, '低风险组模型对比')
+        
+        # 子图2: 所有模型的高风险组对比
+        ax2 = axes[0, 1]
+        self._plot_risk_group_comparison(durations, events, 2, ax2, '高风险组模型对比')
+        
+        # 子图3: DeepSurv详细分析
+        ax3 = axes[1, 0]
+        if 'deepsurv' in self.predictions:
+            risk_scores = -self.predictions['deepsurv']['Risk_Score'].values
+            self.plot_single_model_survival_curves(durations, events, risk_scores, 'DeepSurv', ax3)
+        
+        # 子图4: 模型性能对比条形图
+        ax4 = axes[1, 1]
+        self._plot_performance_comparison(ax4)
+        
+        plt.tight_layout()
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.show()
+    
+    def _plot_risk_group_comparison(self, durations, events, risk_group, ax, title):
+        """绘制指定风险组在不同模型间的对比"""
+        colors = ['#FF6B6B', '#4ECDC4', '#45B7D1']
+        model_info = [
+            ('deepsurv', 'DeepSurv', 'Risk_Score', True),
+            ('cox', 'Cox Regression', 'Cox_Risk_Score', False),
+            ('rsf', 'Random Survival Forest', 'RSF_Risk_Score', False)
+        ]
+        
+        for i, (model_key, model_name, score_col, need_negative) in enumerate(model_info):
+            if model_key in self.predictions:
+                risk_scores = self.predictions[model_key][score_col].values
+                if need_negative:
+                    risk_scores = -risk_scores
+                
+                risk_groups = self.create_risk_groups(risk_scores)
+                mask = risk_groups == risk_group
+                
+                group_durations = durations[mask]
+                group_events = events[mask]
+                
+                if len(group_durations) > 0:
+                    kmf = KaplanMeierFitter()
+                    kmf.fit(group_durations, group_events, label=f'{model_name} (n={mask.sum()})')
+                    kmf.plot(ax=ax, color=colors[i], ci_show=False, linewidth=2)
+        
+        ax.set_title(title, fontsize=12, fontweight='bold')
+        ax.set_xlabel('时间 (月)')
+        ax.set_ylabel('生存概率')
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+    
+    def _plot_performance_comparison(self, ax):
+        """绘制模型性能对比"""
+        if 'c_indices' in self.results:
+            models = list(self.results['c_indices'].keys())
+            c_indices = list(self.results['c_indices'].values())
+            
+            bars = ax.bar(models, c_indices, color=['#FF6B6B', '#4ECDC4', '#45B7D1'])
+            
+            # 添加数值标签
+            for bar, c_index in zip(bars, c_indices):
+                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.005,
+                       f'{c_index:.4f}', ha='center', va='bottom', fontweight='bold')
+            
+            ax.set_title('C-index性能对比', fontsize=12, fontweight='bold')
+            ax.set_ylabel('C-index')
+            ax.set_ylim(0.5, max(c_indices) * 1.05)
+            ax.grid(True, alpha=0.3, axis='y')
+            
+            # 添加基准线
+            ax.axhline(y=0.5, color='red', linestyle='--', alpha=0.7, label='随机预测')
+            ax.legend()
+        else:
+            ax.text(0.5, 0.5, '请先计算C-index', transform=ax.transAxes, 
+                   ha='center', va='center', fontsize=12)
+
+    def calculate_logrank_test(self, durations, events, risk_scores):
+        """计算风险分层的log-rank检验"""
+        risk_groups = self.create_risk_groups(risk_scores)
+        
+        # 低风险组 vs 高风险组
+        low_risk_mask = risk_groups == 0
+        high_risk_mask = risk_groups == 2
+        
+        if low_risk_mask.sum() > 0 and high_risk_mask.sum() > 0:
+            logrank_result = logrank_test(
+                durations[low_risk_mask], durations[high_risk_mask],
+                events[low_risk_mask], events[high_risk_mask]
+            )
+            return logrank_result.p_value
+        
+        return None
     
     def plot_c_index_comparison(self, save_path=None):
         """绘制C-index对比图"""
@@ -295,6 +588,10 @@ class SurvivalModelEvaluator:
         risk_stratification = self.results.get('risk_stratification', self.evaluate_risk_stratification())
         discrimination = self.results.get('risk_score_discrimination', self.calculate_risk_score_discrimination())
         
+        # 计算新的评估指标
+        brier_scores = self.results.get('brier_scores', self.calculate_brier_scores())
+        ibs_scores = self.results.get('integrated_brier_scores', self.calculate_integrated_brier_scores())
+        
         # 创建综合结果DataFrame
         models = list(c_indices.keys())
         comprehensive_results = pd.DataFrame({
@@ -302,15 +599,53 @@ class SurvivalModelEvaluator:
             'C_Index': [c_indices[model] for model in models],
             'LogRank_P_Value': [risk_stratification[model]['logrank_p_value'] for model in models],
             'Risk_Stratification_Significant': [risk_stratification[model]['significant'] for model in models],
-            'Risk_Score_Discrimination_P': [discrimination[model]['p_value'] for model in models]
+            'Risk_Score_Discrimination_P': [discrimination[model]['p_value'] for model in models],
+            'Mean_Brier_Score': [brier_scores.get(model, {}).get('mean_brier_score', np.nan) for model in models],
+            'Integrated_Brier_Score': [ibs_scores.get(model, {}).get('ibs', np.nan) for model in models]
         })
         
         # 按C-index排序
         comprehensive_results = comprehensive_results.sort_values('C_Index', ascending=False)
         comprehensive_results['Rank'] = range(1, len(comprehensive_results) + 1)
         
+        # 添加性能等级评估
+        comprehensive_results['Performance_Grade'] = comprehensive_results.apply(
+            lambda row: self._calculate_performance_grade(row), axis=1
+        )
+        
         self.results['comprehensive'] = comprehensive_results
         return comprehensive_results
+    
+    def _calculate_performance_grade(self, row):
+        """计算模型性能等级"""
+        c_index = row['C_Index']
+        significant_stratification = row['Risk_Stratification_Significant']
+        mean_brier = row['Mean_Brier_Score']
+        
+        # 基于C-index的基础评级
+        if c_index >= 0.75:
+            grade = 'A'
+        elif c_index >= 0.70:
+            grade = 'B'
+        elif c_index >= 0.65:
+            grade = 'C'
+        else:
+            grade = 'D'
+        
+        # 风险分层显著性调整
+        if significant_stratification:
+            grade += '+'
+        else:
+            grade += '-'
+        
+        # Brier Score调整（越低越好）
+        if not np.isnan(mean_brier):
+            if mean_brier <= 0.15:
+                grade += '+'
+            elif mean_brier >= 0.25:
+                grade += '-'
+        
+        return grade
     
     def save_results(self, save_dir):
         """保存评估结果"""
@@ -338,6 +673,33 @@ class SurvivalModelEvaluator:
                 })
             stratification_df = pd.DataFrame(stratification_data)
             stratification_df.to_csv(save_dir / 'risk_stratification_results.csv', index=False)
+        
+        # 保存Brier Score结果
+        if 'brier_scores' in self.results:
+            brier_data = []
+            for model, data in self.results['brier_scores'].items():
+                for i, (time_point, brier_score) in enumerate(zip(data['time_points'], data['brier_scores'])):
+                    brier_data.append({
+                        'Model': model,
+                        'Time_Point': time_point,
+                        'Brier_Score': brier_score
+                    })
+            brier_df = pd.DataFrame(brier_data)
+            brier_df.to_csv(save_dir / 'brier_scores_results.csv', index=False)
+        
+        # 保存IBS结果
+        if 'integrated_brier_scores' in self.results:
+            ibs_data = []
+            for model, data in self.results['integrated_brier_scores'].items():
+                ibs_data.append({
+                    'Model': model,
+                    'IBS': data['ibs'],
+                    'Time_Range_Start': data['time_range'][0],
+                    'Time_Range_End': data['time_range'][1],
+                    'N_Time_Points': data['n_time_points']
+                })
+            ibs_df = pd.DataFrame(ibs_data)
+            ibs_df.to_csv(save_dir / 'integrated_brier_scores_results.csv', index=False)
         
         # 保存完整结果
         with open(save_dir / 'evaluation_results.pkl', 'wb') as f:

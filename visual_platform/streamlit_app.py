@@ -298,31 +298,248 @@ class CancerSurvivalApp:
         """显示模型对比"""
         st.header("🔬 模型性能对比")
         
-        # C-index对比
-        st.subheader("C-index性能对比")
-        fig_c_index = self.plot_c_index_comparison()
-        st.plotly_chart(fig_c_index, use_container_width=True)
+        # 创建多个标签页
+        tab1, tab2, tab3, tab4 = st.tabs(["C-index对比", "Brier Score分析", "综合评估", "性能排名"])
         
-        # 模型排名表
-        st.subheader("模型性能排名")
-        ranking_df = self.comprehensive_results[['Rank', 'Model', 'C_Index', 'Risk_Stratification_Significant']].copy()
-        ranking_df.columns = ['排名', '模型', 'C-index', '风险分层显著性']
-        ranking_df['风险分层显著性'] = ranking_df['风险分层显著性'].map({True: '✅ 是', False: '❌ 否'})
+        with tab1:
+            # C-index对比
+            st.subheader("C-index性能对比")
+            fig_c_index = self.plot_c_index_comparison()
+            st.plotly_chart(fig_c_index, use_container_width=True)
+            
+            # C-index解释
+            st.info("""
+            **C-index (一致性指数)** 衡量模型预测排序与实际生存时间排序的一致性。
+            - 范围: 0.5-1.0，越高越好
+            - > 0.7: 优秀性能
+            - 0.6-0.7: 良好性能
+            - < 0.6: 一般性能
+            """)
         
-        st.dataframe(
-            ranking_df,
-            use_container_width=True,
-            hide_index=True
-        )
+        with tab2:
+            # Brier Score分析
+            st.subheader("Brier Score 和 集成Brier Score (IBS)")
+            
+            # 尝试加载Brier Score数据
+            try:
+                brier_file = self.data_dir / 'processed' / 'brier_scores_results.csv'
+                ibs_file = self.data_dir / 'processed' / 'integrated_brier_scores_results.csv'
+                
+                if brier_file.exists():
+                    brier_data = pd.read_csv(brier_file)
+                    
+                    # Brier Score随时间变化
+                    fig_brier = px.line(
+                        brier_data, 
+                        x='Time_Point', 
+                        y='Brier_Score', 
+                        color='Model',
+                        title='Brier Score随时间变化',
+                        markers=True
+                    )
+                    fig_brier.update_layout(
+                        xaxis_title='时间 (月)',
+                        yaxis_title='Brier Score',
+                        template='plotly_white'
+                    )
+                    st.plotly_chart(fig_brier, use_container_width=True)
+                    
+                    # 平均Brier Score对比
+                    avg_brier = brier_data.groupby('Model')['Brier_Score'].mean().reset_index()
+                    fig_avg_brier = px.bar(
+                        avg_brier,
+                        x='Model',
+                        y='Brier_Score',
+                        title='平均Brier Score对比 (越低越好)',
+                        color='Model'
+                    )
+                    st.plotly_chart(fig_avg_brier, use_container_width=True)
+                
+                if ibs_file.exists():
+                    ibs_data = pd.read_csv(ibs_file)
+                    
+                    # IBS对比
+                    fig_ibs = px.bar(
+                        ibs_data,
+                        x='Model',
+                        y='IBS',
+                        title='集成Brier Score (IBS) 对比 (越低越好)',
+                        color='Model'
+                    )
+                    st.plotly_chart(fig_ibs, use_container_width=True)
+                    
+                    # 显示IBS表格
+                    st.subheader("IBS详细结果")
+                    display_ibs = ibs_data[['Model', 'IBS', 'Time_Range_Start', 'Time_Range_End']].copy()
+                    display_ibs.columns = ['模型', 'IBS', '时间范围开始', '时间范围结束']
+                    st.dataframe(display_ibs, use_container_width=True, hide_index=True)
+                
+                if not brier_file.exists() and not ibs_file.exists():
+                    st.warning("Brier Score和IBS数据尚未生成，请先运行增强版模型评估notebook")
+                    
+            except Exception as e:
+                st.error(f"加载Brier Score数据时出错: {e}")
+            
+            # Brier Score解释
+            st.info("""
+            **Brier Score** 衡量预测概率与实际结果的平方差，是时间依赖的准确性指标。
+            
+            **集成Brier Score (IBS)** 是Brier Score在整个时间范围内的积分，提供综合性能评估。
+            
+            两个指标都是越低越好，表明预测越准确。
+            """)
         
-        # 性能分析
-        best_model = self.comprehensive_results.iloc[0]
-        st.success(f"""
-        **🏆 最佳模型: {best_model['Model']}**
-        - C-index: {best_model['C_Index']:.4f}
-        - 排名: #{best_model['Rank']}
-        - 风险分层: {'显著' if best_model['Risk_Stratification_Significant'] else '不显著'}
-        """)
+        with tab3:
+            # 综合评估
+            st.subheader("综合性能评估")
+            
+            # 检查是否有新的评估指标
+            if 'Mean_Brier_Score' in self.comprehensive_results.columns:
+                # 显示包含所有指标的综合表格
+                display_cols = ['Rank', 'Model', 'C_Index', 'Mean_Brier_Score', 'Integrated_Brier_Score', 
+                               'Risk_Stratification_Significant']
+                if 'Performance_Grade' in self.comprehensive_results.columns:
+                    display_cols.append('Performance_Grade')
+                
+                enhanced_df = self.comprehensive_results[display_cols].copy()
+                col_names = ['排名', '模型', 'C-index', '平均Brier Score', 'IBS', '风险分层显著性']
+                if 'Performance_Grade' in self.comprehensive_results.columns:
+                    col_names.append('性能等级')
+                
+                enhanced_df.columns = col_names
+                enhanced_df['风险分层显著性'] = enhanced_df['风险分层显著性'].map({True: '✅ 是', False: '❌ 否'})
+                
+                st.dataframe(enhanced_df, use_container_width=True, hide_index=True)
+                
+                # 性能雷达图
+                if len(self.comprehensive_results) >= 2:
+                    self._plot_performance_radar()
+            else:
+                # 显示基础评估表格
+                ranking_df = self.comprehensive_results[['Rank', 'Model', 'C_Index', 'Risk_Stratification_Significant']].copy()
+                ranking_df.columns = ['排名', '模型', 'C-index', '风险分层显著性']
+                ranking_df['风险分层显著性'] = ranking_df['风险分层显著性'].map({True: '✅ 是', False: '❌ 否'})
+                
+                st.dataframe(ranking_df, use_container_width=True, hide_index=True)
+        
+        with tab4:
+            # 性能排名和最佳模型分析
+            st.subheader("🏆 最佳模型分析")
+            
+            best_model = self.comprehensive_results.iloc[0]
+            
+            # 创建指标卡片
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric(
+                    label="最佳模型",
+                    value=best_model['Model'],
+                    delta=f"排名 #{best_model['Rank']}"
+                )
+            
+            with col2:
+                st.metric(
+                    label="C-index",
+                    value=f"{best_model['C_Index']:.4f}",
+                    delta="越高越好"
+                )
+            
+            with col3:
+                risk_strat = "显著" if best_model['Risk_Stratification_Significant'] else "不显著"
+                st.metric(
+                    label="风险分层",
+                    value=risk_strat,
+                    delta="统计检验结果"
+                )
+            
+            # 模型优势分析
+            st.subheader("📊 模型对比分析")
+            
+            if len(self.comprehensive_results) > 1:
+                # C-index差异分析
+                c_index_diff = self.comprehensive_results['C_Index'].max() - self.comprehensive_results['C_Index'].min()
+                
+                if c_index_diff > 0.05:
+                    st.success(f"🎯 模型间存在显著性能差异 (最大差异: {c_index_diff:.4f})")
+                else:
+                    st.info(f"📈 模型间性能较为接近 (最大差异: {c_index_diff:.4f})")
+                
+                # 显示每个模型的优势
+                st.write("**各模型特点:**")
+                for _, model_row in self.comprehensive_results.iterrows():
+                    model_name = model_row['Model']
+                    c_index = model_row['C_Index']
+                    
+                    if model_name == "DeepSurv":
+                        advantages = "深度学习，非线性建模，自动特征交互"
+                    elif model_name == "Cox Regression":
+                        advantages = "经典方法，可解释性强，计算高效"
+                    else:
+                        advantages = "集成学习，处理非线性，特征重要性"
+                    
+                    st.write(f"- **{model_name}** (C-index: {c_index:.4f}): {advantages}")
+    
+    def _plot_performance_radar(self):
+        """绘制性能雷达图"""
+        try:
+            # 准备雷达图数据
+            models = self.comprehensive_results['Model'].tolist()
+            
+            # 标准化指标（C-index保持原值，Brier Score和IBS取倒数并标准化）
+            metrics = []
+            metric_names = []
+            
+            if 'C_Index' in self.comprehensive_results.columns:
+                metrics.append(self.comprehensive_results['C_Index'].tolist())
+                metric_names.append('C-index')
+            
+            if 'Mean_Brier_Score' in self.comprehensive_results.columns:
+                # Brier Score越低越好，所以用1减去标准化值
+                brier_scores = self.comprehensive_results['Mean_Brier_Score'].fillna(0.5)
+                normalized_brier = 1 - (brier_scores - brier_scores.min()) / (brier_scores.max() - brier_scores.min() + 1e-8)
+                metrics.append(normalized_brier.tolist())
+                metric_names.append('Brier Score (标准化)')
+            
+            if 'Integrated_Brier_Score' in self.comprehensive_results.columns:
+                ibs_scores = self.comprehensive_results['Integrated_Brier_Score'].fillna(0.5)
+                normalized_ibs = 1 - (ibs_scores - ibs_scores.min()) / (ibs_scores.max() - ibs_scores.min() + 1e-8)
+                metrics.append(normalized_ibs.tolist())
+                metric_names.append('IBS (标准化)')
+            
+            if len(metrics) >= 2:
+                # 创建雷达图
+                fig = go.Figure()
+                
+                colors = ['#FF6B6B', '#4ECDC4', '#45B7D1']
+                
+                for i, model in enumerate(models):
+                    model_values = [metric[i] for metric in metrics]
+                    model_values.append(model_values[0])  # 闭合图形
+                    
+                    fig.add_trace(go.Scatterpolar(
+                        r=model_values,
+                        theta=metric_names + [metric_names[0]],
+                        fill='toself',
+                        name=model,
+                        line_color=colors[i % len(colors)]
+                    ))
+                
+                fig.update_layout(
+                    polar=dict(
+                        radialaxis=dict(
+                            visible=True,
+                            range=[0, 1]
+                        )),
+                    showlegend=True,
+                    title="模型综合性能雷达图",
+                    height=500
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+            
+        except Exception as e:
+            st.error(f"绘制雷达图时出错: {e}")
     
     def show_survival_analysis(self):
         """显示生存分析"""
@@ -521,13 +738,30 @@ class CancerSurvivalApp:
         
         **数据概览**: 查看数据集的基本统计信息和分布
         
-        **模型对比**: 比较DeepSurv、Cox回归和随机生存森林的性能
+        **模型对比**: 
+        - C-index性能对比
+        - Brier Score时间依赖分析
+        - 集成Brier Score (IBS) 评估
+        - 综合性能雷达图
         
-        **生存分析**: 查看各模型的风险分层生存曲线
+        **生存分析**: 查看各模型的风险分层Kaplan-Meier生存曲线
         
-        **风险分析**: 分析风险得分的分布和相关性
+        **风险分析**: 分析风险得分的分布和模型间相关性
         
-        **交互预测**: 模拟患者特征进行风险预测
+        **交互预测**: 模拟患者特征进行实时风险预测
+        """)
+        
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("""
+        ### 📊 评估指标说明
+        
+        **C-index**: 一致性指数，衡量预测排序准确性 (0.5-1.0，越高越好)
+        
+        **Brier Score**: 时间依赖的预测准确性 (0-1，越低越好)
+        
+        **IBS**: 集成Brier Score，整体时间范围的综合性能 (0-1，越低越好)
+        
+        **Log-rank检验**: 风险分层统计显著性检验
         """)
         
         st.sidebar.markdown("---")
