@@ -20,6 +20,14 @@ import os
 # 添加src路径以导入自定义模块
 sys.path.append(str(Path(__file__).parent.parent / 'src'))
 
+# 导入预测服务
+try:
+    from prediction_service import DeepSurvPredictor, PatientDataValidator
+except ImportError:
+    st.error("无法导入预测服务模块，请检查src/prediction_service.py文件")
+    DeepSurvPredictor = None
+    PatientDataValidator = None
+
 # 设置页面配置
 st.set_page_config(
     page_title="癌症生存分析模型对比平台",
@@ -60,6 +68,12 @@ class CancerSurvivalApp:
         self.data_dir = Path('../data')
         self.model_dir = Path('../model')
         self.reports_dir = Path('../reports')
+        
+        # 初始化预测器
+        self.predictor = None
+        if DeepSurvPredictor is not None:
+            self.predictor = DeepSurvPredictor()
+        
         self.load_data()
     
     def load_data(self):
@@ -626,76 +640,417 @@ class CancerSurvivalApp:
         st.plotly_chart(fig_corr, use_container_width=True)
     
     def show_interactive_prediction(self):
-        """显示交互式预测"""
-        st.header("🎯 交互式风险预测")
+        """显示增强的交互式预测"""
+        st.header("🎯 智能风险预测系统")
         
-        st.info("通过调整患者特征，观察不同模型的风险预测结果")
+        st.markdown("""
+        <div style="background-color: #f0f2f6; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;">
+        <h4 style="margin: 0; color: #1f77b4;">🏥 患者风险评估工具</h4>
+        <p style="margin: 0.5rem 0 0 0;">基于DeepSurv深度学习模型，提供个性化的癌症生存风险预测</p>
+        </div>
+        """, unsafe_allow_html=True)
         
-        # 输入特征
-        col1, col2, col3 = st.columns(3)
+        # 创建两列布局
+        col_input, col_results = st.columns([1, 1])
         
-        with col1:
-            age = st.slider("年龄", min_value=18, max_value=100, value=55)
-            tumor_size = st.slider("肿瘤大小 (cm)", min_value=0.1, max_value=20.0, value=5.0, step=0.1)
-            chemo_sessions = st.slider("化疗疗程", min_value=0, max_value=20, value=3)
-        
-        with col2:
-            radiation_sessions = st.slider("放疗次数", min_value=0, max_value=50, value=10)
-            cancer_stage = st.selectbox("癌症分期", ["I", "II", "III", "IV"], index=1)
-            gender = st.selectbox("性别", ["Male", "Female"], index=0)
-        
-        with col3:
-            tumor_type = st.selectbox("肿瘤类型", ["Lung", "Stomach", "Liver", "Breast"], index=0)
-            smoking_status = st.selectbox("吸烟状态", ["Never", "Former", "Current"], index=0)
-            has_surgery = st.checkbox("是否手术", value=True)
-        
-        # 模拟预测（简化版）
-        if st.button("预测风险", type="primary"):
-            # 这里应该使用实际的模型进行预测
-            # 为演示目的，使用简化的风险计算
+        with col_input:
+            st.subheader("📝 患者信息输入")
             
-            base_risk = 0.3
-            age_factor = (age - 50) * 0.01
-            tumor_factor = tumor_size * 0.02
-            stage_factor = {"I": 0, "II": 0.1, "III": 0.2, "IV": 0.4}[cancer_stage]
+            # 基本信息
+            with st.expander("👤 基本信息", expanded=True):
+                age = st.slider("年龄", min_value=18, max_value=100, value=55, 
+                              help="患者年龄，年龄越大通常风险越高")
+                
+                # 性别选择（如果需要）
+                gender_options = {"女性": 0, "男性": 1}
+                gender = st.selectbox("性别", list(gender_options.keys()), index=0)
+                gender_value = gender_options[gender]
             
-            predicted_risk = max(0, min(1, base_risk + age_factor + tumor_factor + stage_factor))
+            # 肿瘤特征
+            with st.expander("🔬 肿瘤特征", expanded=True):
+                tumor_size = st.slider("肿瘤大小 (cm)", min_value=0.1, max_value=20.0, 
+                                     value=3.0, step=0.1,
+                                     help="原发肿瘤的最大直径")
+                
+                stage_options = {"I期": 1, "II期": 2, "III期": 3, "IV期": 4}
+                stage_label = st.selectbox("癌症分期", list(stage_options.keys()), index=1)
+                stage = stage_options[stage_label]
+                
+                grade_options = {"低分化": 1, "中分化": 2, "高分化": 3}
+                grade_label = st.selectbox("肿瘤分级", list(grade_options.keys()), index=1)
+                grade = grade_options[grade_label]
+                
+                lymph_nodes = st.number_input("阳性淋巴结数量", min_value=0, max_value=50, 
+                                            value=0, step=1,
+                                            help="检测到癌细胞的淋巴结数量")
             
-            # 显示预测结果
-            risk_level = "低" if predicted_risk < 0.3 else "中" if predicted_risk < 0.7 else "高"
-            color = "green" if risk_level == "低" else "orange" if risk_level == "中" else "red"
+            # 分子标记
+            with st.expander("🧬 分子标记", expanded=True):
+                er_positive = st.checkbox("ER阳性 (雌激素受体)", value=True,
+                                        help="雌激素受体阳性通常预后较好")
+                pr_positive = st.checkbox("PR阳性 (孕激素受体)", value=True,
+                                        help="孕激素受体阳性通常预后较好")
+                her2_positive = st.checkbox("HER2阳性", value=False,
+                                          help="HER2阳性可能需要靶向治疗")
             
-            st.markdown(f"""
-            <div style="padding: 1rem; border-radius: 0.5rem; background-color: {color}20; border-left: 5px solid {color};">
-                <h3 style="color: {color}; margin: 0;">预测风险: {predicted_risk:.2%}</h3>
-                <p style="margin: 0.5rem 0 0 0;">风险等级: {risk_level}风险</p>
-            </div>
-            """, unsafe_allow_html=True)
+            # 治疗方案
+            with st.expander("💊 治疗方案", expanded=True):
+                surgery_options = {"无手术": 0, "保乳手术": 1, "乳房切除术": 2, "根治性手术": 3}
+                surgery_label = st.selectbox("手术类型", list(surgery_options.keys()), index=2)
+                surgery_type = surgery_options[surgery_label]
+                
+                chemotherapy = st.checkbox("化疗", value=True,
+                                         help="是否接受化疗治疗")
+                radiotherapy = st.checkbox("放疗", value=True,
+                                         help="是否接受放射治疗")
             
-            # 风险因素分析
-            st.subheader("风险因素分析")
-            factors = {
-                "年龄": age_factor,
-                "肿瘤大小": tumor_factor,
-                "癌症分期": stage_factor,
-                "基础风险": base_risk
+            # 其他因素
+            with st.expander("📋 其他因素"):
+                menopause_options = {"绝经前": 0, "围绝经期": 1, "绝经后": 2}
+                menopause_label = st.selectbox("绝经状态", list(menopause_options.keys()), index=0)
+                menopause_status = menopause_options[menopause_label]
+                
+                histology_options = {"导管癌": 0, "小叶癌": 1, "混合型": 2, "其他": 3}
+                histology_label = st.selectbox("病理类型", list(histology_options.keys()), index=0)
+                histology_type = histology_options[histology_label]
+        
+        with col_results:
+            st.subheader("📊 预测结果")
+            
+            # 创建患者数据字典
+            patient_data = {
+                'age': age,
+                'tumor_size': tumor_size,
+                'stage': stage,
+                'grade': grade,
+                'lymph_nodes': lymph_nodes,
+                'er_positive': int(er_positive),
+                'pr_positive': int(pr_positive),
+                'her2_positive': int(her2_positive),
+                'surgery_type': surgery_type,
+                'chemotherapy': int(chemotherapy),
+                'radiotherapy': int(radiotherapy),
+                'menopause_status': menopause_status,
+                'histology_type': histology_type
             }
             
-            factor_df = pd.DataFrame(
-                list(factors.items()),
-                columns=["因素", "风险贡献"]
-            )
+            # 验证数据
+            if PatientDataValidator is not None:
+                is_valid, errors = PatientDataValidator.validate_patient_data(patient_data)
+                if not is_valid:
+                    st.error("输入数据有误：")
+                    for error in errors:
+                        st.error(f"• {error}")
+                    return
             
-            fig_factors = px.bar(
-                factor_df,
-                x="因素",
-                y="风险贡献",
-                title="各因素对风险的贡献",
-                color="风险贡献",
-                color_continuous_scale="Reds"
+            # 进行预测
+            if st.button("🔮 开始预测", type="primary", use_container_width=True):
+                with st.spinner("正在分析患者数据..."):
+                    
+                    # 获取风险评分
+                    if self.predictor is not None:
+                        risk_score = self.predictor.predict_risk_score(patient_data)
+                        risk_interpretation = self.predictor.get_risk_interpretation(risk_score)
+                        feature_importance = self.predictor.get_feature_importance(patient_data)
+                    else:
+                        # 使用简化的风险计算
+                        risk_score = self._calculate_simple_risk(patient_data)
+                        risk_interpretation = self._get_simple_risk_interpretation(risk_score)
+                        feature_importance = self._get_simple_feature_importance(patient_data)
+                    
+                    # 显示风险评分
+                    self._display_risk_score(risk_score, risk_interpretation)
+                    
+                    # 显示生存概率曲线
+                    self._display_survival_curve(patient_data, risk_score)
+                    
+                    # 显示特征重要性
+                    self._display_feature_importance(feature_importance)
+                    
+                    # 显示建议
+                    self._display_recommendations(risk_interpretation)
+    
+    def _calculate_simple_risk(self, patient_data):
+        """简化的风险计算"""
+        base_risk = 0.3
+        
+        # 年龄因子
+        age_factor = (patient_data['age'] - 50) * 0.008
+        
+        # 肿瘤大小因子
+        tumor_factor = patient_data['tumor_size'] * 0.02
+        
+        # 分期因子
+        stage_factor = (patient_data['stage'] - 1) * 0.12
+        
+        # 淋巴结因子
+        lymph_factor = patient_data['lymph_nodes'] * 0.015
+        
+        # 分级因子
+        grade_factor = (patient_data['grade'] - 1) * 0.06
+        
+        # 受体状态因子
+        er_factor = -0.08 if patient_data['er_positive'] else 0.06
+        pr_factor = -0.05 if patient_data['pr_positive'] else 0.03
+        her2_factor = 0.05 if patient_data['her2_positive'] else 0
+        
+        # 治疗因子
+        chemo_factor = -0.10 if patient_data['chemotherapy'] else 0.05
+        radio_factor = -0.06 if patient_data['radiotherapy'] else 0.03
+        surgery_factor = -patient_data['surgery_type'] * 0.03
+        
+        total_risk = (base_risk + age_factor + tumor_factor + stage_factor + 
+                     lymph_factor + grade_factor + er_factor + pr_factor + 
+                     her2_factor + chemo_factor + radio_factor + surgery_factor)
+        
+        return max(0.0, min(1.0, total_risk))
+    
+    def _get_simple_risk_interpretation(self, risk_score):
+        """简化的风险解释"""
+        if risk_score < 0.3:
+            return {
+                'risk_level': '低风险',
+                'color': 'green',
+                'description': '患者的预测风险较低，预后相对良好。',
+                'recommendations': [
+                    '定期随访观察',
+                    '保持健康生活方式',
+                    '按医嘱进行常规检查'
+                ]
+            }
+        elif risk_score < 0.7:
+            return {
+                'risk_level': '中等风险',
+                'color': 'orange',
+                'description': '患者的预测风险处于中等水平，需要密切关注。',
+                'recommendations': [
+                    '加强定期监测',
+                    '考虑辅助治疗',
+                    '保持良好的生活习惯',
+                    '心理支持和指导'
+                ]
+            }
+        else:
+            return {
+                'risk_level': '高风险',
+                'color': 'red',
+                'description': '患者的预测风险较高，需要积极的治疗和监护。',
+                'recommendations': [
+                    '制定积极的治疗方案',
+                    '频繁的医学监测',
+                    '考虑多学科会诊',
+                    '提供心理支持',
+                    '家属参与护理决策'
+                ]
+            }
+    
+    def _get_simple_feature_importance(self, patient_data):
+        """简化的特征重要性计算"""
+        return {
+            'tumor_size': patient_data['tumor_size'] * 0.02,
+            'stage': (patient_data['stage'] - 1) * 0.12,
+            'lymph_nodes': patient_data['lymph_nodes'] * 0.015,
+            'age': abs(patient_data['age'] - 50) * 0.008,
+            'grade': (patient_data['grade'] - 1) * 0.06
+        }
+    
+    def _display_risk_score(self, risk_score, risk_interpretation):
+        """显示风险评分"""
+        color = risk_interpretation['color']
+        risk_level = risk_interpretation['risk_level']
+        description = risk_interpretation['description']
+        
+        st.markdown(f"""
+        <div style="padding: 1.5rem; border-radius: 0.5rem; background-color: {color}20; 
+                    border-left: 5px solid {color}; margin-bottom: 1rem;">
+            <h3 style="color: {color}; margin: 0;">🎯 风险评分: {risk_score:.1%}</h3>
+            <h4 style="color: {color}; margin: 0.5rem 0;">等级: {risk_level}</h4>
+            <p style="margin: 0.5rem 0 0 0; color: #333;">{description}</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # 风险计量器
+        fig_gauge = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=risk_score * 100,
+            domain={'x': [0, 1], 'y': [0, 1]},
+            title={'text': "风险指数 (%)"},
+            gauge={
+                'axis': {'range': [None, 100]},
+                'bar': {'color': color},
+                'steps': [
+                    {'range': [0, 30], 'color': "lightgreen"},
+                    {'range': [30, 70], 'color': "yellow"},
+                    {'range': [70, 100], 'color': "lightcoral"}
+                ],
+                'threshold': {
+                    'line': {'color': "red", 'width': 4},
+                    'thickness': 0.75,
+                    'value': 90
+                }
+            }
+        ))
+        fig_gauge.update_layout(height=300)
+        st.plotly_chart(fig_gauge, use_container_width=True)
+    
+    def _display_survival_curve(self, patient_data, risk_score):
+        """显示生存概率曲线"""
+        # 生成时间点
+        time_points = np.linspace(0, 120, 100)  # 0-120个月
+        
+        # 计算生存概率
+        if self.predictor is not None:
+            survival_probs = self.predictor.predict_survival_probability(
+                patient_data, time_points
             )
-            fig_factors.update_layout(template='plotly_white', height=400)
-            st.plotly_chart(fig_factors, use_container_width=True)
+        else:
+            # 简化的生存概率计算
+            decay_rate = risk_score * 0.08
+            survival_probs = [np.exp(-decay_rate * t / 12) for t in time_points]
+        
+        # 创建生存曲线图
+        fig_survival = go.Figure()
+        
+        fig_survival.add_trace(go.Scatter(
+            x=time_points,
+            y=survival_probs,
+            mode='lines',
+            name='预测生存概率',
+            line=dict(color='blue', width=3),
+            fill='tonexty',
+            fillcolor='rgba(0,100,255,0.1)'
+        ))
+        
+        # 添加关键时间点标记
+        key_times = [12, 24, 36, 60]  # 1年、2年、3年、5年
+        for t in key_times:
+            if t <= max(time_points):
+                idx = np.argmin(np.abs(np.array(time_points) - t))
+                prob = survival_probs[idx]
+                fig_survival.add_annotation(
+                    x=t, y=prob,
+                    text=f"{int(t/12)}年: {prob:.1%}",
+                    showarrow=True,
+                    arrowhead=2,
+                    bgcolor="white",
+                    bordercolor="blue"
+                )
+        
+        fig_survival.update_layout(
+            title="个体化生存概率预测曲线",
+            xaxis_title="时间 (月)",
+            yaxis_title="生存概率",
+            template='plotly_white',
+            height=400,
+            hovermode='x unified'
+        )
+        
+        st.plotly_chart(fig_survival, use_container_width=True)
+    
+    def _display_feature_importance(self, feature_importance):
+        """显示特征重要性"""
+        if not feature_importance:
+            return
+        
+        st.subheader("📈 风险因子分析")
+        
+        # 创建特征重要性数据框
+        feature_df = pd.DataFrame([
+            {'特征': feature, '重要性': importance}
+            for feature, importance in feature_importance.items()
+        ]).sort_values('重要性', ascending=True)
+        
+        # 特征名称映射
+        feature_names = {
+            'tumor_size': '肿瘤大小',
+            'stage': '癌症分期',
+            'lymph_nodes': '淋巴结',
+            'age': '年龄',
+            'grade': '肿瘤分级',
+            'er_positive': 'ER状态',
+            'pr_positive': 'PR状态',
+            'her2_positive': 'HER2状态'
+        }
+        
+        feature_df['特征'] = feature_df['特征'].map(feature_names).fillna(feature_df['特征'])
+        
+        # 创建水平条形图
+        fig_importance = px.bar(
+            feature_df,
+            x='重要性',
+            y='特征',
+            orientation='h',
+            title="各特征对风险预测的贡献度",
+            color='重要性',
+            color_continuous_scale='Reds'
+        )
+        
+        fig_importance.update_layout(
+            template='plotly_white',
+            height=300,
+            showlegend=False
+        )
+        
+        st.plotly_chart(fig_importance, use_container_width=True)
+    
+    def _display_recommendations(self, risk_interpretation):
+        """显示建议"""
+        st.subheader("💡 临床建议")
+        
+        recommendations = risk_interpretation.get('recommendations', [])
+        
+        for i, rec in enumerate(recommendations, 1):
+            st.markdown(f"**{i}.** {rec}")
+        
+        # 添加免责声明
+        st.markdown("""
+        ---
+        **⚠️ 重要提示:**
+        
+        - 此预测结果仅供临床参考，不能替代专业医疗诊断
+        - 实际治疗方案应由专业医生根据具体情况制定
+        - 预测模型基于历史数据训练，个体差异可能影响准确性
+        - 建议结合其他检查结果和临床经验进行综合判断
+        """)
+        
+        # 添加导出功能
+        if st.button("📄 生成预测报告"):
+            self._generate_prediction_report(risk_interpretation)
+    
+    def _generate_prediction_report(self, risk_interpretation):
+        """生成预测报告"""
+        st.success("预测报告已生成！")
+        
+        report_content = f"""
+        # 癌症生存风险预测报告
+        
+        **生成时间:** {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}
+        
+        ## 预测结果
+        - **风险评分:** {risk_interpretation.get('risk_score', 0):.1%}
+        - **风险等级:** {risk_interpretation.get('risk_level', 'N/A')}
+        - **风险描述:** {risk_interpretation.get('description', 'N/A')}
+        
+        ## 临床建议
+        """
+        
+        recommendations = risk_interpretation.get('recommendations', [])
+        for i, rec in enumerate(recommendations, 1):
+            report_content += f"\n{i}. {rec}"
+        
+        report_content += """
+        
+        ## 免责声明
+        此预测结果仅供临床参考，不能替代专业医疗诊断。
+        实际治疗方案应由专业医生根据具体情况制定。
+        """
+        
+        st.download_button(
+            label="下载报告",
+            data=report_content,
+            file_name=f"cancer_risk_prediction_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.md",
+            mime="text/markdown"
+        )
     
     def run(self):
         """运行应用"""
