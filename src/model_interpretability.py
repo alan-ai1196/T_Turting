@@ -334,50 +334,54 @@ class SurvivalModelExplainer:
             return None
     
     def _create_rsf_importance_visualization(self, feature_importance):
-        """创建RSF特征重要性可视化"""
-        plt.figure(figsize=(16, 12))
+        """创建RSF特征重要性可视化（优化版）"""
+        plt.figure(figsize=(20, 12))
         
         # 设置中文字体
         plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']
         plt.rcParams['axes.unicode_minus'] = False
         
-        # 前20个最重要的特征
-        top_features = feature_importance.head(20)
-        
-        # 1. 水平条形图 - 特征重要性
-        plt.subplot(2, 3, 1)
-        colors = plt.cm.viridis(np.linspace(0, 1, len(top_features)))
-        bars = plt.barh(range(len(top_features)), top_features['importance'], color=colors)
-        plt.yticks(range(len(top_features)), top_features['feature'], fontsize=10)
+        # 1. 前10特征重要性（条形图）
+        plt.subplot(3, 3, 1)
+        top_10 = feature_importance.head(10)
+        bars = plt.barh(range(len(top_10)), top_10['importance'], color='skyblue')
+        # 简化特征名显示
+        ytick_labels = [f"{feat[:12]}..." if len(feat) > 12 else feat for feat in top_10['feature']]
+        plt.yticks(range(len(top_10)), ytick_labels, fontsize=8)
         plt.xlabel('重要性得分')
-        plt.title('RSF模型 - 前20个重要特征')
+        plt.title('前10特征重要性')
         plt.gca().invert_yaxis()
         
-        # 添加数值标签
-        for i, bar in enumerate(bars):
-            width = bar.get_width()
-            plt.text(width + 0.001, bar.get_y() + bar.get_height()/2, 
-                    f'{width:.3f}', ha='left', va='center', fontsize=8)
+        # 在条形图上添加数值
+        for i, (bar, importance) in enumerate(zip(bars, top_10['importance'])):
+            plt.text(bar.get_width() + 0.001, bar.get_y() + bar.get_height()/2, 
+                    f'{importance:.3f}', va='center', fontsize=7)
         
-        # 2. 重要性分布直方图
-        plt.subplot(2, 3, 2)
-        plt.hist(feature_importance['importance'], bins=20, alpha=0.7, color='skyblue', edgecolor='black')
+        # 2. 累积重要性曲线
+        plt.subplot(3, 3, 2)
+        cumulative_importance = np.cumsum(feature_importance['importance'])
+        total_importance = cumulative_importance.iloc[-1]
+        cumulative_percentage = cumulative_importance / total_importance * 100
+        
+        plt.plot(range(len(cumulative_percentage)), cumulative_percentage, 
+                'b-', linewidth=2, marker='o', markersize=3)
+        plt.axhline(y=90, color='red', linestyle='--', alpha=0.7, label='90%阈值')
+        plt.xlabel('特征数量')
+        plt.ylabel('累积重要性 (%)')
+        plt.title('特征重要性累积贡献')
+        plt.grid(True, alpha=0.3)
+        plt.legend(fontsize=8)
+        
+        # 3. 重要性分布直方图
+        plt.subplot(3, 3, 3)
+        plt.hist(feature_importance['importance'], bins=20, alpha=0.7, color='lightgreen', edgecolor='black')
         plt.xlabel('重要性得分')
         plt.ylabel('特征数量')
-        plt.title('RSF特征重要性分布')
-        plt.grid(alpha=0.3)
+        plt.title('重要性得分分布')
+        plt.grid(True, alpha=0.3)
         
-        # 3. 累积重要性曲线
-        plt.subplot(2, 3, 3)
-        cumsum_importance = np.cumsum(feature_importance['importance'])
-        plt.plot(range(len(cumsum_importance)), cumsum_importance, 'b-', linewidth=2)
-        plt.xlabel('特征数量')
-        plt.ylabel('累积重要性')
-        plt.title('RSF累积特征重要性')
-        plt.grid(alpha=0.3)
-        
-        # 4. 重要性阈值分析
-        plt.subplot(2, 3, 4)
+        # 4. 不同阈值下的重要特征数量
+        plt.subplot(3, 3, 4)
         thresholds = [0.01, 0.02, 0.03, 0.04, 0.05]
         counts = [len(feature_importance[feature_importance['importance'] >= t]) for t in thresholds]
         plt.bar(range(len(thresholds)), counts, color='lightcoral')
@@ -386,98 +390,98 @@ class SurvivalModelExplainer:
         plt.title('不同阈值下的重要特征数量')
         plt.xticks(range(len(thresholds)), [f'{t:.2f}' for t in thresholds])
         
-        # 5. 前10特征重要性饼图
-        plt.subplot(2, 3, 5)
-        top_10 = feature_importance.head(10)
-        other_importance = feature_importance.iloc[10:]['importance'].sum()
+        # 5. 前5特征重要性占比（优化的饼图）
+        plt.subplot(3, 3, 5)
+        top_5_features = feature_importance.head(5)
+        colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7']
         
-        # 确保所有值都是非负的
-        sizes = list(np.abs(top_10['importance'])) + [max(0, other_importance)]
-        labels = list(top_10['feature']) + ['其他特征']
-        colors = plt.cm.Set3(np.linspace(0, 1, len(sizes)))
+        # 计算占比
+        total_importance_sum = feature_importance['importance'].sum()
+        percentages = (top_5_features['importance'] / total_importance_sum * 100)
         
-        # 过滤掉0值避免饼图警告
-        non_zero_indices = [i for i, size in enumerate(sizes) if size > 0]
-        if non_zero_indices:
-            filtered_sizes = [sizes[i] for i in non_zero_indices]
-            filtered_labels = [labels[i] for i in non_zero_indices]
-            filtered_colors = [colors[i] for i in non_zero_indices]
-            
-            plt.pie(filtered_sizes, labels=filtered_labels, autopct='%1.1f%%', 
-                   colors=filtered_colors, startangle=90)
-            plt.title('前10特征重要性占比')
-        else:
-            plt.text(0.5, 0.5, '无正值重要性', ha='center', va='center', transform=plt.gca().transAxes)
+        # 创建饼图（不显示标签在饼图上）
+        wedges, texts, autotexts = plt.pie(top_5_features['importance'], 
+                                         labels=None,  # 不在饼图上显示标签
+                                         colors=colors,
+                                         autopct=lambda pct: f'{pct:.1f}%' if pct > 2 else '',
+                                         startangle=90,
+                                         textprops={'fontsize': 8})
+        
+        plt.title('前5特征重要性占比', pad=20)
+        
+        # 创建详细图例，显示在饼图右侧
+        legend_labels = []
+        for i, (feature, pct) in enumerate(zip(top_5_features['feature'], percentages)):
+            # 截断过长的特征名
+            display_feature = feature[:15] + '...' if len(feature) > 15 else feature
+            legend_labels.append(f"{display_feature}: {pct:.1f}%")
+        
+        plt.legend(wedges, legend_labels, 
+                  title="特征重要性",
+                  loc="center left", 
+                  bbox_to_anchor=(1, 0, 0.5, 1),
+                  fontsize=8,
+                  title_fontsize=9)
         
         # 6. 重要性排名散点图
-        plt.subplot(2, 3, 6)
-        plt.scatter(range(len(feature_importance)), feature_importance['importance'], 
-                   alpha=0.6, c=feature_importance['importance'], cmap='viridis')
+        plt.subplot(3, 3, 6)
+        scatter = plt.scatter(range(len(feature_importance)), feature_importance['importance'], 
+                             alpha=0.6, c=feature_importance['importance'], cmap='viridis', s=20)
         plt.xlabel('特征排名')
         plt.ylabel('重要性得分')
         plt.title('RSF特征重要性排名分布')
-        plt.colorbar(label='重要性得分')
-        plt.grid(alpha=0.3)
+        plt.colorbar(scatter, label='重要性得分')
+        
+        # 7. 前20特征对比（如果特征数量足够）
+        if len(feature_importance) >= 20:
+            plt.subplot(3, 3, 7)
+            top_20 = feature_importance.head(20)
+            plt.plot(range(len(top_20)), top_20['importance'], 'o-', markersize=4, linewidth=1)
+            plt.xlabel('特征排名')
+            plt.ylabel('重要性得分')
+            plt.title('前20特征重要性趋势')
+            plt.grid(True, alpha=0.3)
+        
+        # 8. 重要性vs排名关系（对数尺度）
+        plt.subplot(3, 3, 8)
+        valid_importance = feature_importance['importance'][feature_importance['importance'] > 0]
+        if len(valid_importance) > 0:
+            plt.loglog(range(1, len(valid_importance)+1), valid_importance, 'bo-', markersize=3)
+            plt.xlabel('特征排名 (log scale)')
+            plt.ylabel('重要性得分 (log scale)')
+            plt.title('特征重要性衰减曲线')
+            plt.grid(True, alpha=0.3)
+        
+        # 9. 统计信息表格
+        plt.subplot(3, 3, 9)
+        plt.axis('off')
+        stats_text = f"""统计信息:
+        
+• 总特征数: {len(feature_importance)}
+• 最高重要性: {feature_importance['importance'].max():.4f}
+• 最低重要性: {feature_importance['importance'].min():.4f}  
+• 平均重要性: {feature_importance['importance'].mean():.4f}
+• 标准差: {feature_importance['importance'].std():.4f}
+• 前5特征占比: {(top_5_features['importance'].sum() / total_importance_sum * 100):.1f}%
+• 前10特征占比: {(top_10['importance'].sum() / total_importance_sum * 100):.1f}%
+
+前5重要特征:
+{chr(10).join([f"• {feat[:20]}: {imp:.4f}" for feat, imp in zip(top_5_features['feature'], top_5_features['importance'])])}
+        """
+        plt.text(0.05, 0.95, stats_text, transform=plt.gca().transAxes, 
+                fontsize=8, verticalalignment='top', fontfamily='monospace',
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgray", alpha=0.5))
         
         plt.tight_layout()
-        plt.show()
+        plt.subplots_adjust(hspace=0.4, wspace=0.4)
         
-        print("✓ RSF特征重要性可视化已生成")
+        print("✓ RSF特征重要性可视化已生成（优化版）")
+        return plt.gcf()
 
     def _analyze_rsf_from_predictions(self):
         """从预测结果分析RSF模型可解释性的替代方法（已弃用）"""
         print("❌ 此方法已弃用，请使用正确的RSF模型进行分析")
         return None
-        plt.title('RSF特征重要性累积分布')
-        plt.grid(True, alpha=0.3)
-        
-        plt.subplot(2, 2, 4)
-        # 前10个特征的饼图
-        top_10 = feature_importance.head(10)
-        other_importance = feature_importance.iloc[10:]['importance'].sum()
-        
-        pie_data = list(top_10['importance']) + [other_importance]
-        pie_labels = list(top_10['feature']) + ['其他特征']
-        
-        plt.pie(pie_data, labels=pie_labels, autopct='%1.1f%%')
-        plt.title('RSF前10重要特征占比')
-        
-        plt.tight_layout()
-        plt.savefig('../reports/rsf_interpretability.png', dpi=300, bbox_inches='tight')
-        plt.show()
-        
-        return feature_importance
-    
-    def _analyze_rsf_from_predictions(self):
-        """从预测结果分析RSF模型可解释性的替代方法"""
-        try:
-            # 尝试从预测文件中分析
-            data_dir = Path('../data/processed')
-            pred_file = data_dir / 'rsf_predictions.csv'
-            
-            if pred_file.exists():
-                print("从RSF预测结果进行简化分析...")
-                # 创建模拟的特征重要性
-                n_features = len(self.feature_names) if self.feature_names else 20
-                feature_names = self.feature_names if self.feature_names else [f'特征_{i+1}' for i in range(n_features)]
-                
-                # 基于模拟数据创建特征重要性
-                np.random.seed(123)  # 不同的种子以产生不同的结果
-                importance_values = np.random.dirichlet(np.ones(n_features))
-                
-                feature_importance = pd.DataFrame({
-                    'feature': feature_names,
-                    'importance': importance_values
-                }).sort_values('importance', ascending=False)
-                
-                return feature_importance
-            
-            print("无法找到RSF模型的预测文件")
-            return None
-            
-        except Exception as e:
-            print(f"从RSF预测结果分析时出错: {e}")
-            return None
     
     def analyze_deepsurv_interpretability_with_shap(self):
         """使用SHAP分析DeepSurv模型的可解释性"""
