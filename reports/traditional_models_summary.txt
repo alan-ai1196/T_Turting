@@ -1,0 +1,7 @@
+传统生存分析模型总结报告\n========================================\n\nCox回归模型:\n- 训练集C-index: 0.3628\n- 测试集C-index: 0.3806\n- 正则化参数: 0.01\n- AIC: 99629.4823\n- 显著特征数量: 17\n\n随机生存森林模型:\n- 训练集C-index: 0.6709\n- 测试集C-index: 0.6250\n- 树的数量: 100\n- 最大深度: 5\n- 特征选择策略: sqrt\n\n风险分层统计:\nModel   Group  Sample_Count  Event_Rate  Median_Duration
+  Cox Group 0          1333    0.117779             30.0
+  Cox Group 1          1333    0.487622             29.0
+  Cox Group 2          1334    0.480510             31.0
+  RSF Group 0          1333    0.099025             30.0
+  RSF Group 1          1333    0.501875             29.0
+  RSF Group 2          1334    0.485007             31.0
