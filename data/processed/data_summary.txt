@@ -1,0 +1,59 @@
+数据预处理摘要报告
+==============================
+
+原始数据形状: (20000, 20)
+处理后数据形状: (20000, 49)
+特征数量: 46
+样本数量: 20000
+事件发生率: 36.20%
+平均随访时间: 30.5 月
+训练集大小: 16000
+测试集大小: 4000
+
+特征列表:
+ 1. Age
+ 2. TumorSize
+ 3. ChemotherapySessions
+ 4. RadiationSessions
+ 5. TreatmentIntensity
+ 6. HasSurgery
+ 7. HasComorbidities
+ 8. HasGeneticMutation
+ 9. CancerStage_encoded
+10. AgeGroup_encoded
+11. TumorSizeGroup_encoded
+12. Gender_Male
+13. Gender_Other
+14. Gender_Unknown
+15. Province_Beijing
+16. Province_Guangdong
+17. Province_Hebei
+18. Province_Henan
+19. Province_Hunan
+20. Province_Jiangsu
+21. Province_Qinghai
+22. Province_Shandong
+23. Province_Shanghai
+24. Province_Sichuan
+25. Province_Xinjiang
+26. Province_Zhejiang
+27. Ethnicity_Hui
+28. Ethnicity_Other
+29. Ethnicity_Tibetan
+30. Ethnicity_Uyghur
+31. Ethnicity_Zhuang
+32. TumorType_Cervical
+33. TumorType_Colorectal
+34. TumorType_Liver
+35. TumorType_Lung
+36. TumorType_Stomach
+37. Metastasis_Yes
+38. TreatmentType_Immunotherapy
+39. TreatmentType_Magic Therapy
+40. TreatmentType_Radiation
+41. TreatmentType_Surgery
+42. TreatmentType_Targeted Therapy
+43. SmokingStatus_Former
+44. SmokingStatus_Never
+45. AlcoholUse_Heavy
+46. AlcoholUse_Occasional
